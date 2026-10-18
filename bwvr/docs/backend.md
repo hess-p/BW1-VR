@@ -549,6 +549,52 @@ same bytes.
 
 ## The start of the headset session
 
+### Experimental game host
+
+`xr_bridge=1` selects the x64 host for the game. `xr_bridge=0` is the default
+local runtime. The setting takes effect at startup. No live backend switch
+is implemented. `bwvr/src/vr/bridge/README.md` describes the separate
+`steam-frame-addon` artifact, installation and test limits.
+
+The game uses the existing XrScreen interface. The host handles the OpenXR
+session, both eyes, input, haptics, panels, cards and cut scene windows.
+Eye and hand state, prediction time, focus and recenter events return to
+the game. Shared textures stay on the GPU. Cards and CPU fallback images
+use a bounded memory payload. Request sequencing and timeouts guard the
+transport. The host waits for each texture copy before it acknowledges it.
+Submission is synchronous, also with `frame_send=2`, to keep texture
+ownership explicit. The local runtime retains its threaded path.
+
+The game runs on Steam Frame with Proton 11 ARM64 and SteamVR/OpenXR 2.18.2.
+Stereo textures, controller input and clean shutdown work. The host submits
+hint cards, subtitles and cut scene layers. Full control coverage, haptic
+feel, device loss, long sessions and a guarded desktop run remain open.
+Frame cost can exceed the display period. The normal Build and release
+workflows provide a separate Steam Frame add-on beside the installer.
+
+
+### Bridge timing
+
+Bridge mode reports `bridge time` every 450 End calls and reports the
+remaining window at shutdown. `bwvr.log` measures successful request round
+trips, pixel and card preparation, and the producer GPU wait in the late
+frame path. `bwvr-host.log` measures command service, each eye copy API call
+and each wait for the host GPU query. Startup commands are excluded.
+Reports include call count, mean per call, total divided by End calls, and
+maximum per call. A window includes menu and non-visible frames. Compare
+steady scene windows, not just the first window.
+
+All values are elapsed CPU time, including blocking and scheduling. The
+copy API measurement includes swapchain acquire and wait. The GPU wait
+includes query submission, flush, polling and sleep. Neither is a GPU
+timestamp measurement. Request totals already include copy and wait times.
+Do not add those categories together. Client round trips also include host
+service. Their difference is not pure IPC cost: event scheduling and host
+log output can contribute. Card and pixel preparation happen before the
+request timer. The existing GPU bridge report covers producer waits outside
+the late frame path. The timing does not change synchronization or the
+transport protocol. There is no per-frame log output.
+
 ### The tries
 
 The session needs the device of the game, so the mod starts it on a frame

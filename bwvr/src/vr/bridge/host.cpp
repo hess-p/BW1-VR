@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "timing.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <d3d11.h>
@@ -58,6 +59,7 @@ int wmain(int argc, wchar_t** argv) {
     ID3D11Texture2D* textures[3] = {};
     uint64_t handles[3] = {};
     std::vector<uint8_t> cards[bwvr::kCards];
+    bwvr::bridge::Timing timing;
     uint32_t sequence = 0;
     bool frame_open = false;
     for (;;) {
@@ -71,6 +73,7 @@ int wmain(int argc, wchar_t** argv) {
       }
       p->result = 1;
       using namespace bwvr::bridge;
+      const auto started = Timing::Now();
       switch (p->command) {
         case Probe:
           p->state.eyes[0] = p->render_pose[1];
@@ -129,8 +132,12 @@ int wmain(int argc, wchar_t** argv) {
             handles[slot] = p->shared_handle;
             Log("Opened shared texture slot %d", slot);
           }
+          const auto copy_started = Timing::Now();
           if (slot == 2) screen.SetPanelTexture(textures[slot]); else screen.SetEyeTexture(slot, textures[slot]);
+          if (slot < 2) timing.Add(slot == 0 ? Timing::kCopyLeft : Timing::kCopyRight, copy_started);
+          const auto drain_started = Timing::Now();
           if (!Drain(context, query)) p->result = -1;
+          timing.Add(slot == 0 ? Timing::kDrainLeft : slot == 1 ? Timing::kDrainRight : Timing::kDrainPanel, drain_started);
           break;
         }
         case EyePixels:
@@ -163,12 +170,15 @@ int wmain(int argc, wchar_t** argv) {
       }
       p->state.running = screen.running(); p->state.presented = screen.presented(); p->state.skipped = screen.skipped();
       for (int i = 0; i < bwvr::kCards; ++i) p->state.card_failed[i] = screen.CardFailed(i);
+      if (p->command >= Begin) timing.Add(p->command, started);
       p->response = sequence;
       const bool fatal = p->result < 0;
       const uint32_t command = p->command;
       SetEvent(ready);
+      if (command == End) timing.Frame(Log, "host service");
       if (fatal) { Log("FAIL: command %u, sequence %u", command, sequence); break; }
     }
+    timing.Report(Log, "host service");
     if (frame_open) screen.EndFrame();
     if (context && query) Drain(context, query);
     for (auto* texture : textures) if (texture) texture->Release();

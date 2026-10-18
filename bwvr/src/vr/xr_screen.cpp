@@ -2855,7 +2855,9 @@ void XrScreen::FinishFrame() {
 void XrScreen::EndFrameLate(const LateFrame& frame, bool on_thread) {
   if (remote_) {
     if (!impl_->frame_open) return;
+    const auto wait_started = bridge::Timing::Now();
     if (frame.wait) frame.wait();
+    remote_->timing.Add(bridge::Timing::kProducerWait, wait_started);
     for (int i = 0; i < eyes_; ++i) if (frame.eye_texture[i]) SetEyeTexture(i, frame.eye_texture[i]);
     SetPanelTexture(frame.panel_texture);
     EndFrame(); return;

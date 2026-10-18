@@ -138,3 +138,11 @@ the add-on ZIP beside the installer. The standalone workflow also accepts
 manual runs. It builds the x64 loader from OpenXR-SDK release-1.1.43 and
 includes its license. The host and the installer come from the same commit.
 The ZIP contains no game files, player ini, probe executables or run logs.
+
+## Timing reports
+
+Bridge mode writes `bridge time` summaries every 450 End calls in both
+logs, and a partial summary at shutdown. Keep both logs from the same run.
+Times are CPU elapsed time, not GPU timestamps. Request totals include the
+copy API and GPU waits. Do not add overlapping categories. Use steady scene
+windows to compare runs. The first window can include startup menus.

@@ -53,6 +53,7 @@ bool RemoteScreen::Launch() {
 bool RemoteScreen::Call(bridge::Command command) {
   if (!healthy_ || !packet || !process_) return false;
   packet->command = command; packet->sequence = ++sequence_; packet->result = 0;
+  const auto started = bridge::Timing::Now();
   if (!SetEvent(request_)) { healthy_ = false; return false; }
   HANDLE waits[] = {process_, ready_};
   const DWORD wait = WaitForMultipleObjects(2, waits, FALSE, command <= bridge::Session ? 30000 : 5000);
@@ -65,6 +66,8 @@ bool RemoteScreen::Call(bridge::Command command) {
     log_("xr bridge    : host rejected command %u. See bwvr-host.log", command);
     healthy_ = false; Shutdown(); return false;
   }
+  if (command >= bridge::Begin) timing.Add(command, started);
+  if (command == bridge::End) timing.Frame(log_, "client round trip");
   return true;
 }
 bool RemoteScreen::MakeDevice() {
@@ -107,6 +110,7 @@ bool RemoteScreen::Texture(void* texture, int index, bool panel) {
 }
 bool RemoteScreen::Pixels(int index, const void* data, int pitch) {
   if (!data || !healthy_) return false;
+  const auto started = bridge::Timing::Now();
   const size_t row = static_cast<size_t>(packet->width) * 4;
   if (pitch < 0 || static_cast<size_t>(pitch) < row || row * packet->height > bridge::kPayload) {
     log_("xr bridge    : CPU image exceeds transport bounds"); healthy_ = false; return false;
@@ -114,10 +118,12 @@ bool RemoteScreen::Pixels(int index, const void* data, int pitch) {
   for (uint32_t y = 0; y < packet->height; ++y)
     memcpy(packet->payload + y * row, static_cast<const uint8_t*>(data) + static_cast<size_t>(y) * pitch, row);
   packet->index = index; packet->payload_bytes = static_cast<uint32_t>(row * packet->height);
+  timing.Add(bridge::Timing::kPreparePixels, started);
   return Call(bridge::EyePixels);
 }
 bool RemoteScreen::Card(int index, const CardLayer& card) {
   if (!healthy_) return false;
+  const auto started = bridge::Timing::Now();
   auto& out = packet->card;
   out.visible = card.visible && card.pixels;
   out.texture_width = card.texture_width; out.texture_height = card.texture_height;
@@ -127,10 +133,12 @@ bool RemoteScreen::Card(int index, const CardLayer& card) {
   if (out.visible && bytes > bridge::kPayload) { healthy_ = false; log_("xr bridge    : card too large"); return false; }
   packet->payload_bytes = out.visible ? static_cast<uint32_t>(bytes) : 0;
   if (packet->payload_bytes) memcpy(packet->payload, card.pixels, packet->payload_bytes);
+  timing.Add(bridge::Timing::kPrepareCard, started);
   packet->index = index; return Call(bridge::Card);
 }
 bool RemoteScreen::Shutdown() {
   if (!process_) return true;
+  timing.Report(log_, "client round trip");
   SetEvent(stop_);
   const bool exited = WaitForSingleObject(process_, 3000) == WAIT_OBJECT_0;
   if (!exited) {
