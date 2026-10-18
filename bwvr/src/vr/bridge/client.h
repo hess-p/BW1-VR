@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include "protocol.h"
+#include "timing.h"
 
 namespace bwvr {
 class RemoteScreen {
@@ -18,6 +19,7 @@ class RemoteScreen {
   bool Shutdown();
   void SetLog(LogFn log) { log_ = log; }
   bool healthy() const { return healthy_; }
+  bridge::Timing timing;
   bool instance_ready = false;
   bridge::Packet* packet = nullptr;
   ID3D11Device* device = nullptr;

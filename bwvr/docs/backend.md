@@ -511,6 +511,29 @@ feel, device loss, long sessions and a guarded desktop run remain open.
 Frame cost can exceed the display period. The normal Build and release
 workflows provide a separate Steam Frame add-on beside the installer.
 
+
+### Bridge timing
+
+Bridge mode reports `bridge time` every 450 End calls and reports the
+remaining window at shutdown. `bwvr.log` measures successful request round
+trips, pixel and card preparation, and the producer GPU wait in the late
+frame path. `bwvr-host.log` measures command service, each eye copy API call
+and each wait for the host GPU query. Startup commands are excluded.
+Reports include call count, mean per call, total divided by End calls, and
+maximum per call. A window includes menu and non-visible frames. Compare
+steady scene windows, not just the first window.
+
+All values are elapsed CPU time, including blocking and scheduling. The
+copy API measurement includes swapchain acquire and wait. The GPU wait
+includes query submission, flush, polling and sleep. Neither is a GPU
+timestamp measurement. Request totals already include copy and wait times.
+Do not add those categories together. Client round trips also include host
+service. Their difference is not pure IPC cost: event scheduling and host
+log output can contribute. Card and pixel preparation happen before the
+request timer. The existing GPU bridge report covers producer waits outside
+the late frame path. The timing does not change synchronization or the
+transport protocol. There is no per-frame log output.
+
 ### The tries
 
 The session needs the device of the game, so the mod starts it on a frame
