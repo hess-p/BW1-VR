@@ -89,6 +89,27 @@ bool RemoteScreen::MakeDevice() {
   if (FAILED(hr)) log_("xr bridge    : local D3D11 device failed, 0x%08lX", hr);
   return SUCCEEDED(hr);
 }
+bool RemoteScreen::TexturePair(void* const textures[2]) {
+  if (!healthy_) return false;
+  uint64_t handles[2] = {};
+  for (int eye = 0; eye < 2; ++eye) {
+    if (!textures[eye]) return false;
+    IDXGIResource* resource = nullptr;
+    HANDLE handle = nullptr;
+    auto* source = static_cast<ID3D11Texture2D*>(textures[eye]);
+    HRESULT hr = source->QueryInterface(__uuidof(IDXGIResource), reinterpret_cast<void**>(&resource));
+    if (SUCCEEDED(hr)) { hr = resource->GetSharedHandle(&handle); resource->Release(); }
+    if (FAILED(hr) || !handle) {
+      log_("xr bridge    : eye %d has no shared handle, 0x%08lX", eye, hr);
+      healthy_ = false; return false;
+    }
+    handles[eye] = reinterpret_cast<uintptr_t>(handle);
+  }
+  memcpy(packet->payload, handles, sizeof(handles));
+  packet->payload_bytes = sizeof(handles);
+  // Both producer textures stay unchanged until the host completes both copies.
+  return Call(bridge::EyeTexturePair);
+}
 bool RemoteScreen::Texture(void* texture, int index, bool panel) {
   if (!healthy_) return false;
   if (!texture) {

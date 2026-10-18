@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "one_walk.h"
+#include "vk_frame_bridge.h"
 #include "MinHook.h"
 #include "../common/bw_addresses.h"
 #include "../common/exe_check.h"
@@ -584,6 +585,7 @@ int g_vk_scene_reread_test = 0;
 // The OpenXR session with Vulkan, and the eye pictures of the Vulkan
 // renderer in it (docs/backend.md, "The session with Vulkan").
 int g_xr_vulkan = 0;
+bool g_frame_vulkan = false;
 int g_vk_eyes = 1;
 // The pixels of the CPU in a session with Vulkan (XrScreen::SetVulkanUpload).
 int g_xr_vulkan_upload = 1;
@@ -874,17 +876,6 @@ void ReadSettings() {
     // with the stick").
     t.move_stick = number("move_stick", 1);
     t.move_stick_speed_cm = number("move_stick_speed_cm", 150);
-    // The time of a frame for the walk and the smooth zoom: the time between
-    // the display times of two frames of the headset (1), or the time of
-    // the CPU between two main camera calls (0). docs/god-view.md, "The time
-    // of a frame".
-    t.god_display_time = number("god_display_time", 1);
-    // While the stick walks, 1: the height of the view follows the land
-    // under the head through a smooth filter, and 0: the view keeps its
-    // height. move_stick_trace=N logs the first N frames of each walk, for
-    // a desktop run.
-    t.move_stick_follow_land = number("move_stick_follow_land", 1);
-    t.move_stick_trace = number("move_stick_trace", 0);
     t.test_keys = number("test_keys", 0) != 0;
     // Tests with no key press, for a desktop run: the game's zoom to the
     // Temple at an update of the camera mode, and the test key of god_spawn.
@@ -1123,22 +1114,25 @@ void ReadSettings() {
   // The launcher's "Test keys" box. F12 saves both eye pictures and
   // Shift F12 steps the subtitles. Off for players.
   g_test_keys = GetPrivateProfileIntA("bwvr", "test_keys", 0, path) != 0;
-  const bool xr_bridge_key =
-      GetPrivateProfileIntA("bwvr", "xr_bridge", 0, path) == 1;
-  // The bridge to the x64 host gives the frames of Direct3D 11 to the host.
-  // backend=vulkan and xr_vulkan=1 have a session with Vulkan, so they use
-  // the local runtime (docs/backend.md, "Only Vulkan").
-  const bool vulkan_session =
-      ProxyBackendVulkan() ||
+  const bool xr_bridge_key = GetPrivateProfileIntA("bwvr", "xr_bridge", 0, path) == 1;
+  const bool relay_requested = ProxyBackendVulkan() &&
+      GetPrivateProfileIntA("bwvr", "xr_bridge_vulkan", 0, path) == 1;
+  const bool vulkan_session = ProxyBackendVulkan() ||
       GetPrivateProfileIntA("bwvr", "xr_vulkan", 0, path) != 0;
-  const bool xr_bridge = xr_bridge_key && !vulkan_session;
+  const bool xr_bridge = xr_bridge_key && (!vulkan_session || relay_requested);
   bwvr::XrScreen::ConfigureBridge(xr_bridge);
-  ModLog("settings     : xr_bridge=%d, %s", xr_bridge_key ? 1 : 0,
-         xr_bridge ? "experimental x64 OpenXR host"
-         : xr_bridge_key
-             ? "but the session has Vulkan (backend=vulkan or xr_vulkan=1), "
-               "and the bridge needs Direct3D 11. The local OpenXR runtime"
-             : "local OpenXR runtime");
+  g_frame_vulkan = xr_bridge && GetPrivateProfileIntA("bwvr", "xr_bridge_vulkan", 0, path) == 1;
+  if (g_frame_vulkan && !ProxyBackendVulkan()) {
+    ModLog("vk frame     : xr_bridge_vulkan needs backend=vulkan. The D3D9 path stays active");
+    g_frame_vulkan = false;
+  }
+  vk::RequireFrameInterop(g_frame_vulkan);
+  const bool host_batch = g_frame_vulkan && GetPrivateProfileIntA("bwvr", "xr_bridge_host_batch", 0, path) == 1;
+  bwvr::XrScreen::ConfigureHostBatch(host_batch);
+  ModLog("vk frame     : xr_bridge_host_batch=%d. Requires xr_bridge_vk_batch=1", host_batch ? 1 : 0);
+  VkFrameBridgeSetBatch(g_frame_vulkan && GetPrivateProfileIntA("bwvr", "xr_bridge_vk_batch", 0, path) == 1);
+  ModLog("settings     : xr_bridge=%d, %s", xr_bridge ? 1 : 0,
+         xr_bridge ? "experimental x64 OpenXR host" : "local OpenXR runtime");
   // Not in the launcher. Off only to test the fault it fixes.
   g_game_camera_rebuild =
       GetPrivateProfileIntA("bwvr", "game_camera_rebuild", 1, path) != 0;
@@ -1954,6 +1948,8 @@ void StartVrStep() {
   }
 
   g_vr_watch = true;
+  // The staged startup worker does not configure a Vulkan source.
+  if (g_frame_vulkan || g_xr_vulkan != 0) g_vr_start = 0;
   if (g_vr_start != 0) {
     VrStartOptions options = {};
     options.mode = g_vr_start;
@@ -2131,6 +2127,16 @@ void VrSessionRuns(bwvr::XrScreen* screen, uint32_t width, uint32_t height) {
   // openxr line after this point goes nowhere: the eye angles, the measured
   // separation, and the size the headset asks for.
   screen->SetLog(&ModLog);
+
+  if (g_frame_vulkan) {
+    vk::WaitForExternal(false);
+    if (!VkFrameBridgeStart(screen->D3D11Device())) {
+      ModLog("vk frame     : startup failed. The game stays on the monitor");
+      delete screen; g_vr_gave_up = true; return;
+    }
+    bwvr::XrScreen::ConfigureVulkanRelay(&VkFrameBridgeCopy);
+    VkSceneSetFrameBridge(true);
+  }
 
   // The Vulkan renderer draws with the device of a session with Vulkan.
   bwvr::XrVulkan session_vulkan;
@@ -2318,6 +2324,10 @@ void __cdecl h_FinishFrame() {
   if (IntroFinishFrame()) return;
 
   if (g_screen == nullptr || !g_screen->running()) return;
+
+  // A scene or intro can call FinishFrame while the headset wants no image.
+  // That caller still owns the open frame, even when its stereo timer is idle.
+  if (g_screen->frame_open()) return;
 
   // Process3dEngine runs the whole scene twice for stereo, and this hook is
   // inside it, so the mono path has to stand aside while that happens.
@@ -2737,6 +2747,11 @@ void Shutdown(const char* path) {
       bwvr::XrScreen* screen = g_screen;
       g_screen = nullptr;
       screen->Stop();
+      if (g_frame_vulkan) {
+        VkSceneSetFrameBridge(false);
+        bwvr::XrScreen::ConfigureVulkanRelay(nullptr);
+        VkFrameBridgeStop();
+      }
       delete screen;
     });
   }

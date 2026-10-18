@@ -37,6 +37,7 @@ add_library(bwvr_mod SHARED
     d3d9_backend.cpp
     ddraw_census.cpp
     vk_ddraw.cpp
+    vk_frame_bridge.cpp
     vk_core.cpp
     vk_scene.cpp
     vk_window.cpp

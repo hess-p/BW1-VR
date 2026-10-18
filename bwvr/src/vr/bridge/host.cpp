@@ -114,30 +114,47 @@ int wmain(int argc, wchar_t** argv) {
             strncpy_s(p->state.profiles[eye], screen.HandProfile(eye), _TRUNCATE);
           }
           break;
-        case EyeTexture: case PanelTexture: {
-          const int slot = p->command == PanelTexture ? 2 : static_cast<int>(p->index);
-          if (p->command == PanelTexture && !p->shared_handle) {
-            screen.SetPanelTexture(nullptr); break;
+        case EyeTexturePair: case EyeTexture: case PanelTexture: {
+          const bool pair = p->command == EyeTexturePair;
+          uint64_t pair_handles[2] = {};
+          if (pair) {
+            if (p->payload_bytes != sizeof(pair_handles) || p->eyes != 2) { p->result = -1; break; }
+            memcpy(pair_handles, p->payload, sizeof(pair_handles));
           }
-          if (!frame_open || slot < 0 || slot > 2 || !context || !p->shared_handle) { p->result = -1; break; }
-          if (handles[slot] != p->shared_handle) {
-            if (textures[slot]) { textures[slot]->Release(); textures[slot] = nullptr; }
-            auto* device = static_cast<ID3D11Device*>(screen.D3D11Device());
-            HRESULT hr = device->OpenSharedResource(reinterpret_cast<HANDLE>(static_cast<uintptr_t>(p->shared_handle)),
-                __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&textures[slot]));
-            if (FAILED(hr)) { Log("FAIL: open texture slot %d, 0x%08lX", slot, hr); p->result = -1; break; }
-            D3D11_TEXTURE2D_DESC desc; textures[slot]->GetDesc(&desc);
-            if (desc.Width != p->width || desc.Height != p->height || desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM ||
-                desc.ArraySize != 1 || desc.MipLevels != 1 || desc.SampleDesc.Count != 1) { p->result = -1; break; }
-            handles[slot] = p->shared_handle;
-            Log("Opened shared texture slot %d", slot);
+          for (int eye = 0; eye < (pair ? 2 : 1); ++eye) {
+            if (pair) { p->index = eye; p->shared_handle = pair_handles[eye]; }
+            const int slot = p->command == PanelTexture ? 2 : static_cast<int>(p->index);
+            if (p->command == PanelTexture && !p->shared_handle) {
+              screen.SetPanelTexture(nullptr); break;
+            }
+            if (!frame_open || slot < 0 || slot > 2 || !context || !p->shared_handle) { p->result = -1; break; }
+            if (handles[slot] != p->shared_handle) {
+              if (textures[slot]) { textures[slot]->Release(); textures[slot] = nullptr; }
+              auto* device = static_cast<ID3D11Device*>(screen.D3D11Device());
+              HRESULT hr = device->OpenSharedResource(reinterpret_cast<HANDLE>(static_cast<uintptr_t>(p->shared_handle)),
+                  __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&textures[slot]));
+              if (FAILED(hr)) { Log("FAIL: open texture slot %d, 0x%08lX", slot, hr); p->result = -1; break; }
+              D3D11_TEXTURE2D_DESC desc; textures[slot]->GetDesc(&desc);
+              if (desc.Width != p->width || desc.Height != p->height || desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM ||
+                  desc.ArraySize != 1 || desc.MipLevels != 1 || desc.SampleDesc.Count != 1) { p->result = -1; break; }
+              handles[slot] = p->shared_handle;
+              Log("Opened shared texture slot %d", slot);
+            }
+            const auto copy_started = Timing::Now();
+            if (slot == 2) screen.SetPanelTexture(textures[slot]); else screen.SetEyeTexture(slot, textures[slot]);
+            if (slot < 2) timing.Add(slot == 0 ? Timing::kCopyLeft : Timing::kCopyRight, copy_started);
+            if (!pair) {
+              const auto drain_started = Timing::Now();
+              if (!Drain(context, query)) p->result = -1;
+              timing.Add(slot == 0 ? Timing::kDrainLeft : slot == 1 ? Timing::kDrainRight : Timing::kDrainPanel, drain_started);
+            }
           }
-          const auto copy_started = Timing::Now();
-          if (slot == 2) screen.SetPanelTexture(textures[slot]); else screen.SetEyeTexture(slot, textures[slot]);
-          if (slot < 2) timing.Add(slot == 0 ? Timing::kCopyLeft : Timing::kCopyRight, copy_started);
-          const auto drain_started = Timing::Now();
-          if (!Drain(context, query)) p->result = -1;
-          timing.Add(slot == 0 ? Timing::kDrainLeft : slot == 1 ? Timing::kDrainRight : Timing::kDrainPanel, drain_started);
+          if (pair) {
+            // Drain even after a partial failure before acknowledging the request.
+            const auto drain_started = Timing::Now();
+            if (context && !Drain(context, query)) p->result = -1;
+            timing.Add(Timing::kDrainPair, drain_started);
+          }
           break;
         }
         case EyePixels:

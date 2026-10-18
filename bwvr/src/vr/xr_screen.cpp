@@ -29,6 +29,8 @@ namespace {
 
 void NoLog(const char*, ...) {}
 bool g_bridge_enabled = false;
+XrScreen::VulkanRelay g_vulkan_relay = nullptr;
+XrScreen::VulkanRelayPair g_vulkan_relay_pair = nullptr;
 
 const char* StateName(XrSessionState state) {
   switch (state) {
@@ -1084,6 +1086,10 @@ void XrScreen::Impl::DestroyActionSet() {
   for (int a = 0; a < kActionCount; ++a) actions[a] = XR_NULL_HANDLE;
 }
 
+void XrScreen::ConfigureVulkanRelayPair(VulkanRelayPair copy) { g_vulkan_relay_pair = copy; }
+
+void XrScreen::ConfigureVulkanRelay(VulkanRelay copy) { g_vulkan_relay = copy; }
+
 void XrScreen::ConfigureBridge(bool enabled) { g_bridge_enabled = enabled; }
 
 XrScreen::XrScreen()
@@ -1183,7 +1189,7 @@ bool XrScreen::has_instance() const {
 bool XrScreen::StartInstance(LogFn log) {
   // The bridge gives the frames of Direct3D 11 to the host, so a session
   // with Vulkan does not use it.
-  if ((g_bridge_enabled && !impl_->vulkan) || remote_) {
+  if (g_bridge_enabled || remote_) {
     impl_->log = log ? log : NoLog;
     if (!remote_) {
       remote_ = new RemoteScreen(log ? log : NoLog);
@@ -1385,6 +1391,7 @@ bool XrScreen::StartSession(uint32_t width, uint32_t height, int eyes) {
     p.panel_enabled = impl_->panel_wanted;
     if (!remote_->Call(bridge::Session) || !p.result || !remote_->MakeDevice()) return false;
     eyes_ = p.eyes; running_ = true;
+    impl_->width = width; impl_->height = height;
     impl_->log("xr bridge    : session ready. Frame submission is synchronous in this mode");
     return true;
   }
@@ -1574,10 +1581,16 @@ bool XrScreen::StartSession(uint32_t width, uint32_t height, int eyes) {
   return true;
 }
 
+static bool g_host_batch = false;
+void XrScreen::ConfigureHostBatch(bool on) { g_host_batch = on; }
+
+bool XrScreen::frame_open() const { return impl_->frame_open; }
+
 bool XrScreen::BeginFrame() {
   if (remote_) {
     if (!remote_->Call(bridge::Begin) || !remote_->packet->result) { running_ = false; should_render_ = false; return false; }
     const auto& state = remote_->packet->state;
+    impl_->display_seconds_ns = state.time;
     running_ = state.running != 0; should_render_ = state.render != 0; recenter_due_ |= state.recenter != 0;
     for (int i = 0; i < 2; ++i) { views_[i] = state.eyes[i]; hands_[i] = state.hands[i]; }
     impl_->frame_open = true;
@@ -2223,6 +2236,17 @@ void XrScreen::SetPanelTexture(void* texture) {
 }
 
 void XrScreen::SetPanelVulkan(uint64_t image) {
+  if (remote_) {
+    if (!remote_->healthy() || !impl_->frame_open || !should_render_ || !image) return;
+    const auto relay_started = bridge::Timing::Now();
+    void* texture = g_vulkan_relay ? g_vulkan_relay(image, 0, 2, impl_->width, impl_->height) : nullptr;
+    remote_->timing.Add(bridge::Timing::kVulkanRelay, relay_started);
+    if (!texture) {
+      impl_->log("xr bridge    : Vulkan relay failed. Stopping the host");
+      remote_->Shutdown(); running_ = false; return;
+    }
+    remote_->Texture(texture, 2, true); return;
+  }
   Impl& s = *impl_;
   s.panel_acquired = -1;
   if (!s.vulkan || !s.frame_open || !should_render_ || image == 0 ||
@@ -2858,8 +2882,14 @@ void XrScreen::EndFrameLate(const LateFrame& frame, bool on_thread) {
     const auto wait_started = bridge::Timing::Now();
     if (frame.wait) frame.wait();
     remote_->timing.Add(bridge::Timing::kProducerWait, wait_started);
-    for (int i = 0; i < eyes_; ++i) if (frame.eye_texture[i]) SetEyeTexture(i, frame.eye_texture[i]);
-    SetPanelTexture(frame.panel_texture);
+    if (eyes_ == 2 && frame.eye_vulkan[0] && frame.eye_vulkan[1]) {
+      SetEyesVulkan(frame.eye_vulkan, frame.eye_layer);
+    } else for (int i = 0; i < eyes_; ++i) {
+      if (frame.eye_vulkan[i]) SetEyeVulkan(i, frame.eye_vulkan[i], frame.eye_layer[i]);
+      else if (frame.eye_texture[i]) SetEyeTexture(i, frame.eye_texture[i]);
+    }
+    if (frame.panel_vulkan) SetPanelVulkan(frame.panel_vulkan);
+    else SetPanelTexture(frame.panel_texture);
     EndFrame(); return;
   }
   Impl& s = *impl_;
@@ -3166,7 +3196,9 @@ bool XrScreen::SubmitTexture(void* texture) {
 
 bool XrScreen::SubmitVulkan(uint64_t image, uint32_t layer) {
   if (!BeginFrame()) return false;
-  for (int eye = 0; eye < eyes_; ++eye) SetEyeVulkan(eye, image, layer);
+  const uint64_t images[2] = {image, image};
+  const uint32_t layers[2] = {layer, layer};
+  SetEyesVulkan(images, layers);
   EndFrame();
   return true;
 }
@@ -4546,7 +4578,36 @@ uint32_t XrScreen::width() const { return impl_->width; }
 
 uint32_t XrScreen::height() const { return impl_->height; }
 
+void XrScreen::SetEyesVulkan(const uint64_t images[2], const uint32_t layers[2]) {
+  if (remote_ && g_vulkan_relay_pair && eyes_ == 2 && images[0] && images[1]) {
+    if (!remote_->healthy() || !impl_->frame_open || !should_render_) return;
+    void* textures[2] = {};
+    const auto started = bridge::Timing::Now();
+    const bool copied = g_vulkan_relay_pair(images, layers, impl_->width, impl_->height, textures);
+    remote_->timing.Add(bridge::Timing::kVulkanRelay, started);
+    if (!copied || !textures[0] || !textures[1]) {
+      impl_->log("xr bridge    : stereo Vulkan relay failed. Stopping the host");
+      remote_->Shutdown(); running_ = false; return;
+    }
+    if (g_host_batch) remote_->TexturePair(textures);
+    else for (int eye = 0; eye < 2; ++eye) remote_->Texture(textures[eye], eye, false);
+    return;
+  }
+  for (int eye = 0; eye < eyes_; ++eye) SetEyeVulkan(eye, images[eye], layers[eye]);
+}
+
 void XrScreen::SetEyeVulkan(int index, uint64_t image, uint32_t layer) {
+  if (remote_) {
+    if (!remote_->healthy() || !impl_->frame_open || !should_render_ || !image) return;
+    const auto relay_started = bridge::Timing::Now();
+    void* texture = g_vulkan_relay ? g_vulkan_relay(image, layer, (index >= 1 && eyes_ > 1) ? 1 : 0, impl_->width, impl_->height) : nullptr;
+    remote_->timing.Add(bridge::Timing::kVulkanRelay, relay_started);
+    if (!texture) {
+      impl_->log("xr bridge    : Vulkan relay failed. Stopping the host");
+      remote_->Shutdown(); running_ = false; return;
+    }
+    remote_->Texture(texture, (index >= 1 && eyes_ > 1) ? 1 : 0, false); return;
+  }
   Impl& s = *impl_;
   if (!s.vulkan || !s.frame_open || !should_render_ || image == 0) return;
   const int eye = (index >= 1 && eyes_ > 1) ? 1 : 0;

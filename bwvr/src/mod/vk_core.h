@@ -182,6 +182,7 @@ void UnlockQueue();
 // Starts Vulkan 1.3 on the first GPU that has it, a dedicated one before an
 // integrated one, with multiview (one draw for both eyes, each in a layer of
 // the target). False with a reason in the log when it cannot.
+void RequireFrameInterop(bool on);
 bool Start();
 bool Started();
 const Core& Get();

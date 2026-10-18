@@ -850,6 +850,16 @@ that moves while the Hand takes it.
 
 ### The repo, the release and the tools
 
+- **Steam Frame Vulkan relay.** Measure fixed-center foveation with
+  both bridge batch options enabled. Check peripheral image quality and
+  compare frame cost with foveation off. Full panel
+  and control coverage, eye gaze transport and device loss remain open.
+
+- **Steam Frame game bridge.** Check full control coverage, haptic feel,
+  device loss, long sessions and a guarded desktop run for `xr_bridge=1`.
+  Check installation and removal of the release add-on on a clean setup.
+  Frame cost and transport timing need more work (`backend.md`).
+
 - **R1. The installer and a person.** No person has run the installer on a
   real game folder and told the result: the install, an update over a
   build that is installed, and the uninstall.

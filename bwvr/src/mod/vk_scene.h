@@ -240,3 +240,6 @@ void VkSceneSetTextureReuse(int on);
 // the picture of the present before, with no wait for the GPU. 0: it waits
 // for the picture of this present.
 void VkSceneSetPresentLate(int on);
+
+// The Frame relay can read the renderer on its own Vulkan device.
+void VkSceneSetFrameBridge(bool ready);

@@ -84,6 +84,7 @@
 void D3D9BackendConfirm();
 // mod_main.cpp: the test key of xr_vulkan_upload.
 void XrVulkanUploadToggle(const char* keys);
+void VkFrameBridgeToggleBatch();
 // mod_main.cpp: the test key of xr_hold_ms.
 void XrHoldToggle(const char* keys);
 // mod_main.cpp: backend=vulkan with vulkan_only=1.
@@ -825,6 +826,11 @@ void PollHotkeys() {
   }
   const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
   const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+  static bool frame_batch_down = false;
+  const bool frame_batch_now = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+  if (g_test_keys && frame_batch_now && !frame_batch_down && ctrl && shift && GameHasFocus())
+    VkFrameBridgeToggleBatch();
+  frame_batch_down = frame_batch_now;
   const bool plain = !shift && !ctrl;
 
   if (GameHasFocus()) {
@@ -1712,10 +1718,13 @@ void __fastcall Process3dEngineBody(void* self, void* unused) {
                          VkSceneEyesFor(g_screen->width(), g_screen->height(),
                                         &vk_image);
     if (vk_eyes || vk_pair) {
+      if (send_mode == 0) {
+        const uint64_t images[2] = {vk_image, vk_image};
+        const uint32_t layers[2] = {0, 1};
+        g_screen->SetEyesVulkan(images, layers);
+      }
       for (int e = 0; e < 2; ++e) {
-        if (send_mode == 0) {
-          g_screen->SetEyeVulkan(e, vk_image, static_cast<uint32_t>(e));
-        } else {
+        if (send_mode != 0) {
           late.eye_vulkan[e] = vk_image;
           late.eye_layer[e] = static_cast<uint32_t>(e);
         }

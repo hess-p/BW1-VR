@@ -13,6 +13,7 @@ class RemoteScreen {
   bool Launch();
   bool Call(bridge::Command command);
   bool MakeDevice();
+  bool TexturePair(void* const textures[2]);
   bool Texture(void* texture, int index, bool panel);
   bool Pixels(int index, const void* data, int pitch);
   bool Card(int index, const CardLayer& card);

@@ -31,6 +31,16 @@ int main() {
   if (invalid.Call(bwvr::bridge::Probe)) return 5;
   invalid.Shutdown();
   Log("PASS: the host rejected an incompatible protocol version.");
+  // A pair request must not touch a graphics device before a session exists.
+  bwvr::RemoteScreen no_session(Log);
+  if (!no_session.Launch()) return 7;
+  no_session.packet->eyes = 2;
+  no_session.packet->payload_bytes = 2 * sizeof(uint64_t);
+  const uint64_t handles[2] = {1, 2};
+  memcpy(no_session.packet->payload, handles, sizeof(handles));
+  if (no_session.Call(bwvr::bridge::EyeTexturePair)) return 8;
+  no_session.Shutdown();
+  Log("PASS: the host rejected an eye pair without an open frame.");
   Log("PASS: 120 x86 to x64 host requests, poses, 64 bit values and payloads. No headset used.");
   return 0;
 }

@@ -573,6 +573,29 @@ Frame cost can exceed the display period. The normal Build and release
 workflows provide a separate Steam Frame add-on beside the installer.
 
 
+### Vulkan renderer with the Frame host
+
+`xr_bridge_vulkan=1` with `xr_bridge=1` and `backend=vulkan` uses the Vulkan
+renderer in the game and the D3D11 OpenXR session in the x64 host. The default
+is 0. `vk_frame_bridge.cpp` imports a shared D3D11 texture into the local
+Vulkan device. It blits the source layer, restores the source layout,
+releases the relay to the external owner and waits before the host reads it.
+The host acknowledges only after its own copy finishes. The relay stays
+alive until shutdown. Both devices must have the same adapter LUID.
+
+This path requires Vulkan 1.3 and Win32 external memory import. Proton ARM64
+supports KMT texture import in the game. Full layer and control coverage,
+device loss and long sessions remain open. There is no eye gaze transport or live backend
+switch. See `src/vr/bridge/README.md` for setup and test limits.
+
+`xr_bridge_vk_batch=0` submits and waits for each Vulkan eye copy separately.
+1 records both copies before one submission and fence wait. The host still
+receives each eye separately. With `test_keys=1`, Ctrl+Shift+F8 switches this
+setting at the frame boundary when the game has focus. A timing window that
+contains a switch has both modes. Compare the next full windows in ms/End.
+The batch mode requires a headset test. Single-image and panel copies retain
+their own submissions.
+
 ### Bridge timing
 
 Bridge mode reports `bridge time` every 450 End calls and reports the
@@ -3049,7 +3072,6 @@ part that gives calls to Direct3D 9 or that needs a Direct3D 11 device:
 | The merge of draw calls (`draw_merge`) and `one_walk_merge` | No merge and no hook |
 | The session with Vulkan | No Direct3D 11 device and no relay (`XrScreen::UseD3D11`). The pixels of the CPU go into the swapchains with Vulkan (`xr_vulkan_upload=1`) |
 | A session with Vulkan that does not start | No session with Direct3D 11 after it: the game stays on the monitor |
-| The x64 host for Steam Frame (`xr_bridge`) | Not used: the host takes the frames of Direct3D 11 only, so the session uses the local runtime |
 
 Their keys do nothing then, and their test keys (Shift 8, 9, F, G, H, J,
 K, M, N, V, C, Z and U) write a line of the log and change nothing. The

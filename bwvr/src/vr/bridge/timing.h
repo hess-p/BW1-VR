@@ -8,7 +8,7 @@ class Timing {
  public:
   static constexpr unsigned kCopyLeft = 15, kCopyRight = 16,
       kDrainLeft = 17, kDrainRight = 18, kDrainPanel = 19,
-      kProducerWait = 20, kPreparePixels = 21, kPrepareCard = 22, kSlots = 23;
+      kProducerWait = 20, kPreparePixels = 21, kPrepareCard = 22, kVulkanRelay = 23, kDrainPair = 25, kSlots = 26;
   static LONGLONG Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
   void Add(unsigned slot, LONGLONG start) {
     const LONGLONG elapsed = Now() - start;
@@ -28,7 +28,7 @@ class Timing {
       "begin", "eye requests", "eye pixels", "panel request", "panel quads", "card",
       "window", "end", "haptic", "stop", "probe", "left copy API", "right copy API",
       "left GPU wait", "right GPU wait", "panel GPU wait", "producer GPU wait",
-      "prepare pixels", "prepare card"};
+      "prepare pixels", "prepare card", "Vulkan relay", "eye pair request", "eye pair GPU wait"};
     for (unsigned i = 0; i < kSlots; ++i) {
       const auto& s = samples_[i];
       if (s.count) log("bridge time  : %s %s: %u calls, %.3f ms/call, %.3f ms/End, max %.3f ms",

@@ -18,6 +18,7 @@ namespace {
 HMODULE g_library = nullptr;
 Core g_core = {};
 bool g_started = false;
+bool g_frame_interop = false;
 bool g_failed = false;
 VkCommandPool g_pool = VK_NULL_HANDLE;
 VkFence g_fence = VK_NULL_HANDLE;
@@ -240,6 +241,8 @@ bool Pending() {
 void LockQueue() { g_lock(); }
 void UnlockQueue() { g_unlock(); }
 
+void RequireFrameInterop(bool on) { g_frame_interop = on; }
+
 bool Start() {
   if (g_started) return true;
   if (g_failed) return false;
@@ -380,7 +383,7 @@ bool Start() {
   if (g_core.shading_rate) v11.pNext = &want_rate;
   g_core.window_present =
       surface && HasDeviceExtension(g_core.physical, "VK_KHR_swapchain");
-  const char* device_extensions[2];
+  const char* device_extensions[3];
   uint32_t device_extension_count = 0;
   if (g_core.shading_rate) {
     device_extensions[device_extension_count++] =
@@ -388,6 +391,11 @@ bool Start() {
   }
   if (g_core.window_present) {
     device_extensions[device_extension_count++] = "VK_KHR_swapchain";
+  }
+  if (g_frame_interop) {
+    if (!HasDeviceExtension(g_core.physical, "VK_KHR_external_memory_win32"))
+      return Fail("Frame external memory", VK_ERROR_EXTENSION_NOT_PRESENT);
+    device_extensions[device_extension_count++] = "VK_KHR_external_memory_win32";
   }
   VkDeviceCreateInfo device_info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
   device_info.pNext = &features;

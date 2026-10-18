@@ -199,6 +199,13 @@ class XrScreen {
  public:
   // Select before startup. 0 uses the local runtime, 1 uses the x64 host.
   static void ConfigureBridge(bool enabled);
+  using VulkanRelay = void* (*)(uint64_t image, uint32_t layer, int slot,
+                               uint32_t width, uint32_t height);
+  static void ConfigureVulkanRelay(VulkanRelay copy);
+  using VulkanRelayPair = bool (*)(const uint64_t images[2], const uint32_t layers[2],
+                                   uint32_t width, uint32_t height, void* textures[2]);
+  static void ConfigureVulkanRelayPair(VulkanRelayPair copy);
+  void SetEyesVulkan(const uint64_t images[2], const uint32_t layers[2]);
   XrScreen();
   ~XrScreen();
 
@@ -310,6 +317,9 @@ class XrScreen {
   bool BeginFrame();
 
   bool should_render() const { return should_render_; }
+  // A caller owns this frame until EndFrame, also when no image is wanted.
+  bool frame_open() const;
+  static void ConfigureHostBatch(bool on);
 
   // Where the runtime wants each eye at the display time this frame. Valid
   // only between BeginFrame and EndFrame.

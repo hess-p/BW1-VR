@@ -40,6 +40,11 @@ jobs:
           name: steam-frame-addon
           path: local/steam-frame-release
 
+      - name: Pack the Steam Frame release asset
+        shell: pwsh
+        run: |
+          Compress-Archive -Path local/steam-frame-release/* -DestinationPath "local/steam-frame-$env:BUILD_ID.zip"
+
       - name: Make the release
         shell: pwsh
         env:
@@ -55,6 +60,6 @@ jobs:
           $notes += "`n`nRun the installer over the build that you have. The first line of bwvr.log in your game folder says which build you run: it must show ``build $env:BUILD_ID``."
           $more = @('--prerelease')
           if ($env:DRAFT -eq 'true') { $more += '--draft' }
-          $frame = (Get-ChildItem local/steam-frame-release/steam-frame-*.zip).FullName
+          $frame = "local/steam-frame-$env:BUILD_ID.zip"
           gh release create $tag "$env:INSTALLER" $frame --target $env:GITHUB_SHA --title $title --notes $notes @more
           exit $LASTEXITCODE

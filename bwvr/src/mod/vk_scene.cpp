@@ -3039,9 +3039,11 @@ void VkSceneSetEyes(bool on) {
 }
 
 // The images of the renderer go to a session only when the renderer draws
-// with the device of the session (vk::UseExternal): an image of another
-// device is not an image of the session.
-bool SameDeviceAsSession() { return vk::Started() && vk::Get().external; }
+// with the device of the session (vk::UseExternal), or through the Frame
+// relay. A raw image handle never crosses the process boundary.
+bool g_frame_bridge = false;
+void VkSceneSetFrameBridge(bool ready) { g_frame_bridge = ready; }
+bool SameDeviceAsSession() { return vk::Started() && (vk::Get().external || g_frame_bridge); }
 
 bool VkSceneEyesWanted() {
   return g_eyes && VkSceneOn() && SameDeviceAsSession();
